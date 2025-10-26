@@ -211,6 +211,16 @@ class WOCDownloadManager:
 
             url = str(url).strip()
 
+            # Utageページの場合はスキップ（DLリンクのm3u8を使用するため）
+            if 'utage-system.com/video' in url.lower():
+                # DLリンクがあるか確認
+                dl_col = '動画DLリンク' if sheet_name == "コンテンツ" else '録画（動画DLリンク）'
+                if dl_col in row and pd.notna(row[dl_col]):
+                    dl_url = str(row[dl_col]).strip()
+                    if '.m3u8' in dl_url.lower():
+                        # m3u8 URLがあるので、Utageページはスキップ
+                        continue
+
             # URL種別を判定
             url_type = DownloadExecutor.detect_url_type(url)
 
