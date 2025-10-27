@@ -1,6 +1,7 @@
 """実際のダウンロード処理の実行"""
 
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +57,46 @@ class DownloadExecutor:
         except:
             return 0
 
+    @staticmethod
+    def extract_utage_m3u8_url(url: str) -> Optional[str]:
+        """
+        utage-system の URL から m3u8 URL を抽出
+
+        Args:
+            url: utage-system の動画URL
+
+        Returns:
+            m3u8 URL、取得できない場合は None
+        """
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+
+                # ページを開く
+                page.goto(url, wait_until='domcontentloaded', timeout=60000)
+
+                # HTML を取得
+                html = page.content()
+                browser.close()
+
+                # config オブジェクトから m3u8 URL を抽出
+                # Looking for: const config = {...src: "https://...video.m3u8"...};
+                match = re.search(r'src:\s*"([^"]+\.m3u8)"', html)
+
+                if match:
+                    m3u8_url = match.group(1)
+                    return m3u8_url
+
+                return None
+
+        except ImportError:
+            raise ImportError("playwright is required for utage-system downloads. Install with: pip install playwright && playwright install chromium")
+        except Exception as e:
+            return None
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -82,16 +123,27 @@ class DownloadExecutor:
             )
 
         try:
+            # utage-system の場合は m3u8 URL を抽出
+            original_url = url
+            if 'utage-system.com' in url.lower():
+                self.logger.info(f"Extracting m3u8 URL from utage-system: {url}", "info")
+                m3u8_url = self.extract_utage_m3u8_url(url)
+                if m3u8_url:
+                    self.logger.info(f"Found m3u8 URL: {m3u8_url}", "success")
+                    url = m3u8_url
+                else:
+                    raise ValueError(f"Failed to extract m3u8 URL from {original_url}")
+
             # Cookie ファイルのパスを確認（現在の作業ディレクトリから探す）
             base_path = Path.cwd()
 
             # URL に応じて適切な cookie ファイルを選択
             cookie_path = None
-            if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+            if 'youtube.com' in original_url.lower() or 'youtu.be' in original_url.lower():
                 youtube_cookies = base_path / "youtube_cookies.txt"
                 if youtube_cookies.exists():
                     cookie_path = youtube_cookies
-            elif 'vimeo.com' in url.lower():
+            elif 'vimeo.com' in original_url.lower():
                 vimeo_cookies = base_path / "vimeo_cookies.txt"
                 if vimeo_cookies.exists():
                     cookie_path = vimeo_cookies
