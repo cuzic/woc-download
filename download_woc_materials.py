@@ -509,6 +509,20 @@ class DownloadExecutor:
             )
 
         try:
+            # Cookie ファイルのパスを確認（現在の作業ディレクトリから探す）
+            base_path = Path.cwd()
+
+            # URL に応じて適切な cookie ファイルを選択
+            cookie_path = None
+            if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+                youtube_cookies = base_path / "youtube_cookies.txt"
+                if youtube_cookies.exists():
+                    cookie_path = youtube_cookies
+            elif 'vimeo.com' in url.lower():
+                vimeo_cookies = base_path / "vimeo_cookies.txt"
+                if vimeo_cookies.exists():
+                    cookie_path = vimeo_cookies
+
             ydl_opts = {
                 'writesubtitles': True,          # 字幕をダウンロード
                 'writeautomaticsub': True,       # 自動生成字幕をダウンロード
@@ -518,6 +532,10 @@ class DownloadExecutor:
                 'quiet': True,
                 'no_warnings': True,
             }
+
+            # Cookie ファイルが存在する場合は使用
+            if cookie_path:
+                ydl_opts['cookiefile'] = str(cookie_path)
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])

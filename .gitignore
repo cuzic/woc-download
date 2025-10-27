@@ -59,3 +59,11 @@ logs/
 # Distribution
 *.zip
 *.tar.gz
+
+# Cookies (sensitive data)
+*_cookies.txt
+youtube_cookies.txt
+vimeo_cookies.txt
+
+# Subtitle downloads (test directory)
+subtitles/
