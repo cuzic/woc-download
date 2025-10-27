@@ -97,6 +97,144 @@ class DownloadExecutor:
         except Exception as e:
             return None
 
+    def transcribe_video_with_whisper(self, video_url: str, output_path: str) -> DownloadResult:
+        """
+        OpenAI Whisper API を使って動画から字幕を生成
+
+        Args:
+            video_url: 動画URL（m3u8 または mp4）
+            output_path: 出力パス（拡張子なし）
+
+        Returns:
+            DownloadResult: 文字起こし結果
+        """
+        temp_video = None
+        temp_audio = None
+
+        try:
+            from openai import OpenAI
+
+            # OpenAI API キーを環境変数から取得
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+            client = OpenAI(api_key=api_key)
+
+            # 一時的に動画をダウンロード
+            temp_video = output_path + "_temp.mp4"
+            temp_audio = output_path + "_temp.mp3"
+
+            self.logger.info(f"Downloading video for transcription: {video_url}", "info")
+
+            # yt-dlp で音声のみをダウンロード（軽量化のため）
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': output_path + "_temp",
+                'quiet': True,
+                'no_warnings': True,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+
+            if not os.path.exists(temp_audio):
+                raise FileNotFoundError(f"Failed to download audio from: {video_url}")
+
+            # ファイルサイズをチェック（OpenAI API の制限: 25MB）
+            file_size_mb = os.path.getsize(temp_audio) / (1024 * 1024)
+            if file_size_mb > 25:
+                self.logger.warning(f"Audio file is {file_size_mb:.2f}MB, which exceeds OpenAI's 25MB limit. Consider splitting the file.", "warning")
+
+            self.logger.info(f"Transcribing audio with OpenAI Whisper API ({file_size_mb:.2f}MB)...", "info")
+
+            # OpenAI Whisper API で文字起こし
+            with open(temp_audio, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="ja",  # 日本語
+                    response_format="verbose_json",  # タイムスタンプ付き
+                    timestamp_granularities=["segment"]
+                )
+
+            self.logger.info(f"Detected language: {transcript.language}", "success")
+
+            # SRT 形式で保存
+            srt_path = output_path + ".ja.srt"
+            with open(srt_path, 'w', encoding='utf-8') as f:
+                if hasattr(transcript, 'segments') and transcript.segments:
+                    for i, segment in enumerate(transcript.segments, start=1):
+                        start_time = self._format_timestamp(segment.start)
+                        end_time = self._format_timestamp(segment.end)
+                        f.write(f"{i}\n")
+                        f.write(f"{start_time} --> {end_time}\n")
+                        f.write(f"{segment.text.strip()}\n\n")
+                else:
+                    # segments がない場合は、全体のテキストを1つのエントリとして保存
+                    f.write("1\n")
+                    f.write("00:00:00,000 --> 99:99:99,999\n")
+                    f.write(f"{transcript.text}\n\n")
+
+            # 一時ファイルを削除
+            if temp_video and os.path.exists(temp_video):
+                os.remove(temp_video)
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
+
+            file_size = self.get_file_size(srt_path)
+            self.logger.info(
+                f"Transcription completed: {srt_path} ({format_file_size(file_size)})",
+                "success"
+            )
+
+            return DownloadResult(
+                success=True,
+                file_path=srt_path,
+                file_size=file_size,
+                error_message=None
+            )
+
+        except ImportError:
+            error_msg = "openai package is required for transcription. Install with: pip install openai"
+            self.logger.error(error_msg)
+            return DownloadResult(
+                success=False,
+                file_path=None,
+                file_size=None,
+                error_message=error_msg
+            )
+        except Exception as e:
+            error_msg = f"Failed to transcribe video: {str(e)}"
+            self.logger.error(error_msg)
+
+            # クリーンアップ
+            if temp_video and os.path.exists(temp_video):
+                os.remove(temp_video)
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
+
+            return DownloadResult(
+                success=False,
+                file_path=None,
+                file_size=None,
+                error_message=error_msg
+            )
+
+    @staticmethod
+    def _format_timestamp(seconds: float) -> str:
+        """秒数を SRT タイムスタンプ形式に変換"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -123,14 +261,16 @@ class DownloadExecutor:
             )
 
         try:
-            # utage-system の場合は m3u8 URL を抽出
+            # utage-system の場合は m3u8 URL を抽出して whisper で文字起こし
             original_url = url
             if 'utage-system.com' in url.lower():
                 self.logger.info(f"Extracting m3u8 URL from utage-system: {url}", "info")
                 m3u8_url = self.extract_utage_m3u8_url(url)
                 if m3u8_url:
                     self.logger.info(f"Found m3u8 URL: {m3u8_url}", "success")
-                    url = m3u8_url
+                    # utage-system には字幕がないので、whisper で文字起こし
+                    self.logger.info("utage-system videos don't have subtitles. Using OpenAI Whisper API for transcription...", "info")
+                    return self.transcribe_video_with_whisper(m3u8_url, output_path)
                 else:
                     raise ValueError(f"Failed to extract m3u8 URL from {original_url}")
 

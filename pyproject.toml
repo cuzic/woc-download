@@ -20,6 +20,9 @@ dependencies = [
     # エラーハンドリング
     "tenacity>=8.0.0",
     "playwright>=1.48.0",
+    "openai-whisper>=20250625",
+    "faster-whisper>=1.1.0",
+    "openai>=2.2.0",
 ]
 
 [project.scripts]
