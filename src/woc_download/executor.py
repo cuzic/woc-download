@@ -63,7 +63,7 @@ class DownloadExecutor:
     )
     def download_video(self, url: str, output_path: str) -> DownloadResult:
         """
-        yt-dlpを使って動画をダウンロード
+        yt-dlpを使って動画の字幕をダウンロード
 
         Args:
             url: 動画URL
@@ -73,17 +73,20 @@ class DownloadExecutor:
             DownloadResult: ダウンロード結果
         """
         if self.dry_run:
-            self.logger.console_print(f"[DRY RUN] Would download video: {url}", "yellow")
+            self.logger.console_print(f"[DRY RUN] Would download subtitles: {url}", "yellow")
             return DownloadResult(
                 success=True,
-                file_path=output_path + ".mp4",
+                file_path=output_path + ".ja.srt",
                 file_size=0,
                 error_message=None
             )
 
         try:
             ydl_opts = {
-                'format': 'bestvideo+bestaudio/best',
+                'writesubtitles': True,          # 字幕をダウンロード
+                'writeautomaticsub': True,       # 自動生成字幕をダウンロード
+                'subtitleslangs': ['ja', 'en'],  # 日本語と英語の字幕
+                'skip_download': True,           # 動画はダウンロードしない
                 'outtmpl': output_path + '.%(ext)s',
                 'quiet': True,
                 'no_warnings': True,
@@ -92,31 +95,46 @@ class DownloadExecutor:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            # ダウンロードされたファイルを探す
+            # ダウンロードされた字幕ファイルを探す
             parent_dir = Path(output_path).parent
             base_name = Path(output_path).name
 
-            downloaded_files = list(parent_dir.glob(f"{base_name}.*"))
-            if downloaded_files:
-                file_path = str(downloaded_files[0])
-                file_size = self.get_file_size(file_path)
+            # .ja.srt, .en.srt, .ja.vtt, .en.vtt などのファイルを探す
+            subtitle_patterns = [
+                f"{base_name}.ja.*",
+                f"{base_name}.en.*",
+                f"{base_name}.*.*"  # その他の字幕ファイル
+            ]
 
+            downloaded_files = []
+            for pattern in subtitle_patterns:
+                downloaded_files.extend(list(parent_dir.glob(pattern)))
+
+            # 重複を除去
+            downloaded_files = list(set(downloaded_files))
+
+            if downloaded_files:
+                # 最初のファイルをメインとして扱う
+                file_path = str(downloaded_files[0])
+                total_size = sum(self.get_file_size(str(f)) for f in downloaded_files)
+
+                subtitle_list = ', '.join([f.name for f in downloaded_files])
                 self.logger.info(
-                    f"Downloaded video: {file_path} ({format_file_size(file_size)})",
+                    f"Downloaded subtitles: {subtitle_list} ({format_file_size(total_size)})",
                     "success"
                 )
 
                 return DownloadResult(
                     success=True,
                     file_path=file_path,
-                    file_size=file_size,
+                    file_size=total_size,
                     error_message=None
                 )
             else:
-                raise FileNotFoundError("Downloaded file not found")
+                raise FileNotFoundError("Subtitle files not found")
 
         except Exception as e:
-            error_msg = f"Failed to download video {url}: {str(e)}"
+            error_msg = f"Failed to download subtitles {url}: {str(e)}"
             self.logger.error(error_msg)
             return DownloadResult(
                 success=False,
