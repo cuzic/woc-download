@@ -99,7 +99,7 @@ class DownloadExecutor:
             ydl_opts = {
                 'writesubtitles': True,          # 字幕をダウンロード
                 'writeautomaticsub': True,       # 自動生成字幕をダウンロード
-                'subtitleslangs': ['ja', 'en'],  # 日本語と英語の字幕
+                'subtitleslangs': ['ja-x-autogen', 'ja', 'en'],  # 日本語と英語の字幕（Vimeo対応）
                 'skip_download': True,           # 動画はダウンロードしない
                 'outtmpl': output_path + '.%(ext)s',
                 'quiet': True,
